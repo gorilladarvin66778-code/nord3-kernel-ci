@@ -1,6 +1,8 @@
 name: build-8821au
+
 on:
   workflow_dispatch:
+
 jobs:
   build:
     runs-on: ubuntu-22.04
@@ -8,6 +10,7 @@ jobs:
     env:
       WORK: ${{ github.workspace }}/nord3-build
       CONFIG_SRC: ${{ github.workspace }}/nord3_running_kernel.config
+      LV: "-android12-9"
     steps:
       - uses: actions/checkout@v4
 
@@ -16,31 +19,37 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost
           df -h /
 
-      - name: Deps
-        run: chmod +x build_nord3_8821au.sh && ./build_nord3_8821au.sh deps
+      - name: Make script executable
+        run: chmod +x build_nord3_8821au.sh
 
-      - name: Toolchain
+      - name: deps
+        run: ./build_nord3_8821au.sh deps
+
+      - name: toolchain
         run: ./build_nord3_8821au.sh toolchain
 
-      - name: Kernel source
+      - name: source
         run: ./build_nord3_8821au.sh source
 
-      - name: Fix kernel-5.10 path
-        run: ln -s ../ $WORK/kernel/drivers/kernel-5.10
-
-      - name: Config
+      - name: config
         run: ./build_nord3_8821au.sh config
 
-      - name: Kernel build
+      - name: kernel
         run: ./build_nord3_8821au.sh kernel
 
-      - name: Driver
+      - name: driver
         run: ./build_nord3_8821au.sh driver
 
-      - name: Check
+      - name: check
         run: ./build_nord3_8821au.sh check
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload module and logs
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          name: 8821au-ko
-          path: nord3-build/dist/8821au.ko
+          name: 8821au-build
+          path: |
+            nord3-build/dist/
+            nord3-build/*.log
+            nord3-build/missing-syms.txt
+          if-no-files-found: warn
