@@ -12,12 +12,21 @@ EXPECT_SHA="b0bb096ffb03"
 
 KREPO="https://github.com/lineageos-on-vitamin/android_kernel_oneplus_mt6983"
 KBRANCH="lineage-22.2"
+
+VND_REPO="https://github.com/lineageos-on-vitamin/android_kernel_modules_oneplus_mt6983"
+VND_BRANCH="lineage-22.2"
+VND_SHA="2bfce4788931"
+
 CLANG_REPO="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86"
 CLANG_BRANCH="android12-release"
 CLANG_NAME="clang-r416183b"
 DRV_REPO="https://github.com/morrownr/8821au-20210708"
 
-SRC="$WORK/kernel"; OUT="$WORK/out"; DRV="$WORK/8821au"; DIST="$WORK/dist"
+SRC="$WORK/kernel"
+VND="$WORK/vendor/oplus"
+OUT="$WORK/out"
+DRV="$WORK/8821au"
+DIST="$WORK/dist"
 CLANG="$WORK/clang-repo/$CLANG_NAME"
 mkdir -p "$WORK" "$DIST"
 
@@ -33,6 +42,11 @@ kmake() {
   make -C "$SRC" O="$OUT" ARCH=arm64 LLVM=1 LLVM_IAS=1 \
     CROSS_COMPILE=aarch64-linux-gnu- CLANG_TRIPLE=aarch64-linux-gnu- \
     HOSTCC=gcc HOSTCXX=g++ HOSTLD=ld LOCALVERSION="$LV" "$@"
+}
+
+# make a symlink only if nothing (file, dir or broken link) is there yet
+mklink() {
+  if [ ! -e "$2" ] && [ ! -L "$2" ]; then ln -s "$1" "$2"; fi
 }
 
 st_deps() {
@@ -55,14 +69,26 @@ st_toolchain() {
 }
 
 st_source() {
+  # kernel source, pinned to the running kernel's commit
   [ -d "$SRC/.git" ] || git clone --depth 1 -b "$KBRANCH" "$KREPO" "$SRC"
   H="$(git -C "$SRC" rev-parse --short=12 HEAD)"
-  [ "$H" = "$EXPECT_SHA" ] || fail "HEAD=$H, expected $EXPECT_SHA"
-  pass "kernel source HEAD $H"
-  # oplus code includes ../../../../kernel-5.10/...; our clone is named 'kernel', so link it
-  [ -e "$SRC/drivers/kernel-5.10" ] || ln -s ../ "$SRC/drivers/kernel-5.10"
-  [ -f "$SRC/drivers/kernel-5.10/drivers/power/supply/charger_class.h" ] || fail "kernel-5.10 symlink broken"
-  pass "kernel-5.10 path symlink"
+  [ "$H" = "$EXPECT_SHA" ] || fail "kernel HEAD=$H expected $EXPECT_SHA"
+  pass "kernel HEAD $H"
+
+  # vendor/oplus = modules repo, pinned commit. Holds kernel/cpu (sched Kconfig etc.)
+  mkdir -p "$WORK/vendor"
+  [ -d "$VND/.git" ] || git clone -b "$VND_BRANCH" "$VND_REPO" "$VND"
+  git -C "$VND" checkout -q "$VND_SHA" || fail "cannot checkout $VND_SHA"
+  VH="$(git -C "$VND" rev-parse --short=12 HEAD)"
+  [ "$VH" = "$VND_SHA" ] || fail "vendor commit $VH expected $VND_SHA"
+  pass "vendor/oplus commit $VH"
+
+  # path links the oplus code expects
+  mklink ../ "$SRC/drivers/kernel-5.10"
+  mklink ../../vendor/oplus/kernel/cpu "$SRC/kernel/oplus_cpu"
+  [ -f "$SRC/drivers/kernel-5.10/drivers/power/supply/charger_class.h" ] || fail "kernel-5.10 link broken"
+  [ -f "$SRC/kernel/oplus_cpu/sched/Kconfig" ] || fail "kernel/oplus_cpu link broken"
+  pass "path links ok"
 }
 
 st_config() {
@@ -122,7 +148,7 @@ st_check() {
     fi
   done
   echo "undefined symbols not in Module.symvers: $MISS (list: $WORK/missing-syms.txt)"
-  echo "NOTE: symbols may come from vmlinux and not be in Module.symvers. Check this list before insmod."
+  echo "NOTE: some symbols come from vmlinux, not Module.symvers. Review this list before any insmod."
   sha256sum "$KO"
   pass "check finished - no phone load done"
 }
