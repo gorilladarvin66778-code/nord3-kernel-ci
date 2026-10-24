@@ -1,0 +1,46 @@
+name: build-8821au
+on:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 330
+    env:
+      WORK: ${{ github.workspace }}/nord3-build
+      CONFIG_SRC: ${{ github.workspace }}/nord3_running_kernel.config
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost
+          df -h /
+
+      - name: Deps
+        run: chmod +x build_nord3_8821au.sh && ./build_nord3_8821au.sh deps
+
+      - name: Toolchain
+        run: ./build_nord3_8821au.sh toolchain
+
+      - name: Kernel source
+        run: ./build_nord3_8821au.sh source
+
+      - name: Fix kernel-5.10 path
+        run: ln -s ../ $WORK/kernel/drivers/kernel-5.10
+
+      - name: Config
+        run: ./build_nord3_8821au.sh config
+
+      - name: Kernel build
+        run: ./build_nord3_8821au.sh kernel
+
+      - name: Driver
+        run: ./build_nord3_8821au.sh driver
+
+      - name: Check
+        run: ./build_nord3_8821au.sh check
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: 8821au-ko
+          path: nord3-build/dist/8821au.ko
