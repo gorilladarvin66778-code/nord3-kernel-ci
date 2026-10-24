@@ -44,11 +44,6 @@ kmake() {
     HOSTCC=gcc HOSTCXX=g++ HOSTLD=ld LOCALVERSION="$LV" "$@"
 }
 
-# make a symlink only if nothing (file, dir or broken link) is there yet
-mklink() {
-  if [ ! -e "$2" ] && [ ! -L "$2" ]; then ln -s "$1" "$2"; fi
-}
-
 st_deps() {
   sudo apt-get update
   sudo apt-get install -y git curl build-essential bc bison flex libssl-dev libelf-dev \
@@ -83,9 +78,19 @@ st_source() {
   [ "$VH" = "$VND_SHA" ] || fail "vendor commit $VH expected $VND_SHA"
   pass "vendor/oplus commit $VH"
 
-  # path links the oplus code expects
-  mklink ../ "$SRC/drivers/kernel-5.10"
-  mklink ../../vendor/oplus/kernel/cpu "$SRC/kernel/oplus_cpu"
+  [ -f "$VND/kernel/cpu/sched/Kconfig" ] || fail "vendor repo has no kernel/cpu/sched/Kconfig"
+
+  # path links the oplus code expects. Repo may ship its own (wrong) link, so replace it.
+  echo "--- repo-tracked link before:"; git -C "$SRC" ls-files -s kernel/oplus_cpu || true
+  ls -l "$SRC/kernel/oplus_cpu" 2>/dev/null || echo "  (none)"
+  rm -f "$SRC/kernel/oplus_cpu"
+  mkdir -p "$SRC/kernel"
+  ln -s ../../vendor/oplus/kernel/cpu "$SRC/kernel/oplus_cpu"
+  echo "--- link after:"; ls -l "$SRC/kernel/oplus_cpu"
+
+  rm -f "$SRC/drivers/kernel-5.10"
+  ln -s ../ "$SRC/drivers/kernel-5.10"
+
   [ -f "$SRC/drivers/kernel-5.10/drivers/power/supply/charger_class.h" ] || fail "kernel-5.10 link broken"
   [ -f "$SRC/kernel/oplus_cpu/sched/Kconfig" ] || fail "kernel/oplus_cpu link broken"
   pass "path links ok"
