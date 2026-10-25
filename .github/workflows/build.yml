@@ -10,7 +10,6 @@ jobs:
     env:
       WORK: ${{ github.workspace }}/nord3-build
       CONFIG_SRC: ${{ github.workspace }}/nord3_running_kernel.config
-      LV: "-android12-9-o"
     steps:
       - uses: actions/checkout@v4
 
@@ -36,6 +35,18 @@ jobs:
 
       - name: kernel
         run: ./build_nord3_8821au.sh kernel
+
+      - name: diagnose kernel failure
+        if: always()
+        run: |
+          echo "--- memory:"; free -h
+          echo "--- disk:"; df -h /
+          echo "--- error lines in kernel log:"
+          grep -niE "error|killed|no space|undefined|fatal|oom|ld\.lld|collect2" "$WORK/kernel-build.log" | tail -60 || echo "  none"
+          echo "--- last 15 lines of kernel log:"
+          tail -15 "$WORK/kernel-build.log" || true
+          echo "--- kernel messages (OOM?):"
+          dmesg 2>/dev/null | grep -iE "out of memory|killed process" | tail -10 || echo "  not readable"
 
       - name: driver
         run: ./build_nord3_8821au.sh driver
