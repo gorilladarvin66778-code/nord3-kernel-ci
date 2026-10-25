@@ -10,7 +10,7 @@ jobs:
     env:
       WORK: ${{ github.workspace }}/nord3-build
       CONFIG_SRC: ${{ github.workspace }}/nord3_running_kernel.config
-      LV: "-android12-9"
+      LV: "-android12-9-o"
     steps:
       - uses: actions/checkout@v4
 
@@ -30,15 +30,6 @@ jobs:
 
       - name: source
         run: ./build_nord3_8821au.sh source
-
-      - name: debug vendor (runs even if source failed)
-        if: always()
-        run: |
-          echo "--- vendor dir:"; ls -la "$WORK/vendor/oplus" || true
-          echo "--- HEAD:"; git -C "$WORK/vendor/oplus" log -1 --oneline || true
-          echo "--- tracked sched/Kconfig:"; git -C "$WORK/vendor/oplus" ls-files | grep "sched/Kconfig" || echo "  none"
-          echo "--- on disk:"; ls -la "$WORK/vendor/oplus/kernel/cpu/sched/" 2>&1 | head -20 || true
-          echo "--- kernel links:"; ls -la "$WORK/kernel/kernel/" 2>&1 | head -20 || true
 
       - name: config
         run: ./build_nord3_8821au.sh config
