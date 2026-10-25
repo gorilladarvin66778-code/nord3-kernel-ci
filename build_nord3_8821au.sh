@@ -70,7 +70,7 @@ st_source() {
   [ "$H" = "$EXPECT_SHA" ] || fail "kernel HEAD=$H expected $EXPECT_SHA"
   pass "kernel HEAD $H"
 
-  # vendor/oplus = modules repo, pinned commit. Holds kernel/cpu (sched Kconfig etc.)
+  # vendor/oplus = modules repo, pinned commit
   mkdir -p "$WORK/vendor"
   [ -d "$VND/.git" ] || git clone -b "$VND_BRANCH" "$VND_REPO" "$VND"
   git -C "$VND" checkout -q "$VND_SHA" || fail "cannot checkout $VND_SHA"
@@ -78,16 +78,21 @@ st_source() {
   [ "$VH" = "$VND_SHA" ] || fail "vendor commit $VH expected $VND_SHA"
   pass "vendor/oplus commit $VH"
 
-  [ -f "$VND/kernel/cpu/sched/Kconfig" ] || fail "vendor repo has no kernel/cpu/sched/Kconfig"
+  if [ ! -f "$VND/kernel/cpu/sched/Kconfig" ]; then
+    echo "DIAG: top level of vendor/oplus:"
+    ls -la "$VND" 2>&1 | head -30 || true
+    echo "DIAG: tracked files containing sched:"
+    git -C "$VND" ls-files | grep -i sched | head -30 || echo "  none"
+    echo "DIAG: kernel/ inside vendor/oplus:"
+    ls -laR "$VND/kernel" 2>&1 | head -60 || true
+    fail "vendor repo has no kernel/cpu/sched/Kconfig"
+  fi
+  pass "sched/Kconfig present"
 
-  # path links the oplus code expects. Repo may ship its own (wrong) link, so replace it.
-  echo "--- repo-tracked link before:"; git -C "$SRC" ls-files -s kernel/oplus_cpu || true
-  ls -l "$SRC/kernel/oplus_cpu" 2>/dev/null || echo "  (none)"
+  # path links the oplus code expects. Replace any link the repo ships.
   rm -f "$SRC/kernel/oplus_cpu"
   mkdir -p "$SRC/kernel"
   ln -s ../../vendor/oplus/kernel/cpu "$SRC/kernel/oplus_cpu"
-  echo "--- link after:"; ls -l "$SRC/kernel/oplus_cpu"
-
   rm -f "$SRC/drivers/kernel-5.10"
   ln -s ../ "$SRC/drivers/kernel-5.10"
 
