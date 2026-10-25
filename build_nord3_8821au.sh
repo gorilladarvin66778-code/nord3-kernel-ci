@@ -4,7 +4,7 @@ set -euo pipefail
 
 WORK="${WORK:-$HOME/nord3-build}"
 CONFIG_SRC="${CONFIG_SRC:-$HOME/nord3_running_kernel.config}"
-LV="${LV:--android12-9}"
+LV="${LV:--android12-9-o}"
 
 EXPECT_REL="5.10.209-android12-9-o-gb0bb096ffb03"
 EXPECT_VERMAGIC="$EXPECT_REL SMP preempt mod_unload modversions aarch64"
@@ -24,6 +24,7 @@ DRV_REPO="https://github.com/morrownr/8821au-20210708"
 
 SRC="$WORK/kernel"
 VND="$WORK/vendor/oplus"
+VND_CPU="$VND/vendor/oplus/kernel/cpu"
 OUT="$WORK/out"
 DRV="$WORK/8821au"
 DIST="$WORK/dist"
@@ -70,29 +71,26 @@ st_source() {
   [ "$H" = "$EXPECT_SHA" ] || fail "kernel HEAD=$H expected $EXPECT_SHA"
   pass "kernel HEAD $H"
 
-  # vendor/oplus = modules repo, pinned commit
-  mkdir -p "$WORK/vendor"
-  [ -d "$VND/.git" ] || git clone -b "$VND_BRANCH" "$VND_REPO" "$VND"
+  # modules repo, pinned commit. Its root contains vendor/oplus/kernel/cpu
+  [ -d "$VND/.git" ] || { mkdir -p "$WORK/vendor"; git clone -b "$VND_BRANCH" "$VND_REPO" "$VND"; }
   git -C "$VND" checkout -q "$VND_SHA" || fail "cannot checkout $VND_SHA"
   VH="$(git -C "$VND" rev-parse --short=12 HEAD)"
   [ "$VH" = "$VND_SHA" ] || fail "vendor commit $VH expected $VND_SHA"
-  pass "vendor/oplus commit $VH"
+  pass "vendor commit $VH"
 
-  if [ ! -f "$VND/kernel/cpu/sched/Kconfig" ]; then
-    echo "DIAG: top level of vendor/oplus:"
-    ls -la "$VND" 2>&1 | head -30 || true
-    echo "DIAG: tracked files containing sched:"
-    git -C "$VND" ls-files | grep -i sched | head -30 || echo "  none"
-    echo "DIAG: kernel/ inside vendor/oplus:"
-    ls -laR "$VND/kernel" 2>&1 | head -60 || true
-    fail "vendor repo has no kernel/cpu/sched/Kconfig"
+  if [ ! -f "$VND_CPU/sched/Kconfig" ]; then
+    echo "DIAG: sched/Kconfig search inside vendor clone:"
+    find "$VND" -path '*sched/Kconfig' -not -path '*/.git/*' 2>/dev/null | head -20 || true
+    fail "no $VND_CPU/sched/Kconfig"
   fi
-  pass "sched/Kconfig present"
+  pass "sched/Kconfig present at $VND_CPU"
 
-  # path links the oplus code expects. Replace any link the repo ships.
+  # kernel/oplus_cpu must point at the cpu dir (absolute path, no relative confusion)
   rm -f "$SRC/kernel/oplus_cpu"
   mkdir -p "$SRC/kernel"
-  ln -s ../../vendor/oplus/kernel/cpu "$SRC/kernel/oplus_cpu"
+  ln -s "$VND_CPU" "$SRC/kernel/oplus_cpu"
+
+  # oplus code includes ../../../../kernel-5.10/... so this must resolve to the kernel root
   rm -f "$SRC/drivers/kernel-5.10"
   ln -s ../ "$SRC/drivers/kernel-5.10"
 
