@@ -24,7 +24,6 @@ DRV_REPO="https://github.com/morrownr/8821au-20210708"
 
 SRC="$WORK/kernel"
 VND="$WORK/vendor/oplus"
-VND_CPU="$VND/vendor/oplus/kernel/cpu"
 OUT="$WORK/out"
 DRV="$WORK/8821au"
 DIST="$WORK/dist"
@@ -71,31 +70,39 @@ st_source() {
   [ "$H" = "$EXPECT_SHA" ] || fail "kernel HEAD=$H expected $EXPECT_SHA"
   pass "kernel HEAD $H"
 
-  # modules repo, pinned commit. Its root contains vendor/oplus/kernel/cpu
+  # modules repo, pinned commit. Its tree contains vendor/oplus/...
   [ -d "$VND/.git" ] || { mkdir -p "$WORK/vendor"; git clone -b "$VND_BRANCH" "$VND_REPO" "$VND"; }
   git -C "$VND" checkout -q "$VND_SHA" || fail "cannot checkout $VND_SHA"
   VH="$(git -C "$VND" rev-parse --short=12 HEAD)"
   [ "$VH" = "$VND_SHA" ] || fail "vendor commit $VH expected $VND_SHA"
   pass "vendor commit $VH"
 
-  if [ ! -f "$VND_CPU/sched/Kconfig" ]; then
-    echo "DIAG: sched/Kconfig search inside vendor clone:"
-    find "$VND" -path '*sched/Kconfig' -not -path '*/.git/*' 2>/dev/null | head -20 || true
-    fail "no $VND_CPU/sched/Kconfig"
-  fi
-  pass "sched/Kconfig present at $VND_CPU"
-
-  # kernel/oplus_cpu must point at the cpu dir (absolute path, no relative confusion)
-  rm -f "$SRC/kernel/oplus_cpu"
-  mkdir -p "$SRC/kernel"
-  ln -s "$VND_CPU" "$SRC/kernel/oplus_cpu"
+  # every tracked symlink in the kernel tree that points into vendor/oplus
+  # must point into this clone instead (the layout differs in CI)
+  BAD=0
+  while read -r mode _ _ path; do
+    [ "$mode" = "120000" ] || continue
+    t="$(readlink "$SRC/$path" 2>/dev/null || true)"
+    case "$t" in
+      *vendor/oplus/*)
+        rest="${t#*vendor/oplus/}"
+        tgt="$VND/vendor/oplus/$rest"
+        rm -f "$SRC/$path"
+        ln -s "$tgt" "$SRC/$path"
+        if [ -e "$SRC/$path" ]; then
+          echo "relinked $path -> $tgt"
+        else
+          echo "MISSING target for $path -> $tgt"; BAD=1
+        fi
+        ;;
+    esac
+  done < <(git -C "$SRC" ls-files -s)
+  [ "$BAD" = 0 ] || fail "some oplus links have no target in the modules clone (see MISSING)"
 
   # oplus code includes ../../../../kernel-5.10/... so this must resolve to the kernel root
   rm -f "$SRC/drivers/kernel-5.10"
   ln -s ../ "$SRC/drivers/kernel-5.10"
-
   [ -f "$SRC/drivers/kernel-5.10/drivers/power/supply/charger_class.h" ] || fail "kernel-5.10 link broken"
-  [ -f "$SRC/kernel/oplus_cpu/sched/Kconfig" ] || fail "kernel/oplus_cpu link broken"
   pass "path links ok"
 }
 
