@@ -4,8 +4,8 @@ set -euo pipefail
 
 WORK="${WORK:-$HOME/nord3-build}"
 CONFIG_SRC="${CONFIG_SRC:-$HOME/nord3_running_kernel.config}"
-# Kernel tree's localversion file already adds "-o". Only "-android12-9" is needed here.
-LV="-android12-9"
+# With .scmversion present, the tree's localversion "-o" is dropped, so LV must carry it.
+LV="-android12-9-o"
 
 EXPECT_REL="5.10.209-android12-9-o-gb0bb096ffb03"
 EXPECT_VERMAGIC="$EXPECT_REL SMP preempt mod_unload modversions aarch64"
@@ -104,8 +104,7 @@ st_source() {
   ln -s ../ "$SRC/drivers/kernel-5.10"
   [ -f "$SRC/drivers/kernel-5.10/drivers/power/supply/charger_class.h" ] || fail "kernel-5.10 link broken"
 
-  # our link edits make the git tree 'dirty', which adds -dirty to the release string.
-  # .scmversion (untracked) makes scripts/setlocalversion use this fixed -g<sha> instead of git.
+  # link edits make the git tree 'dirty' (adds -dirty). .scmversion gives a fixed -g<sha> instead.
   echo "-g$H" > "$SRC/.scmversion"
   pass "path links ok, .scmversion=$(cat "$SRC/.scmversion")"
 }
