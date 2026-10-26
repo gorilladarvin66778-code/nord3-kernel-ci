@@ -78,7 +78,7 @@ st_source() {
   [ "${H}" = "${EXPECT_SHA}" ] || fail "kernel HEAD=${H} expected ${EXPECT_SHA}"
   pass "kernel HEAD ${H}"
 
-  # modules repo, pinned commit. Its tree contains vendor/oplus/...
+  # modules repo, pinned commit. Its tree is: <clone>/vendor/oplus/kernel/...
   if [ ! -d "${VND}/.git" ]; then
     mkdir -p "${WORK}/vendor"
     git clone -b "${VND_BRANCH}" "${VND_REPO}" "${VND}"
@@ -100,7 +100,7 @@ st_source() {
         rm -f "${SRC}/${path}"
         ln -s "${tgt}" "${SRC}/${path}"
         if [ -e "${SRC}/${path}" ]; then
-          echo "relinked ${path} -> ${tgt}"
+          echo "relinked ${path}"
         else
           echo "MISSING target for ${path} -> ${tgt}"
           BAD=1
@@ -110,15 +110,22 @@ st_source() {
   done < <(git -C "${SRC}" ls-files -s)
   [ "${BAD}" = 0 ] || fail "some oplus links have no target in the modules clone (see MISSING)"
 
-  # oplus code includes ../../../../vendor/oplus/... from drivers/gpu/drm/mediatek/mediatek_v2/
-  if [ -d "${SRC}/vendor" ] && [ ! -L "${SRC}/vendor" ]; then
-    fail "kernel repo has a real vendor/ directory, refusing to replace it"
-  fi
+  # oplus code includes ../../../../vendor/oplus/... from drivers/gpu/drm/mediatek/oplus/,
+  # which resolves to drivers/vendor/oplus/... so drivers/vendor must point at the
+  # modules clone's vendor/ directory. Remove the wrong link from the previous attempt.
   rm -f "${SRC}/vendor"
-  ln -s "${WORK}/vendor" "${SRC}/vendor"
-  TP="${SRC}/vendor/oplus/kernel/touchpanel/oplus_touchscreen_v2/touchpanel_notify/touchpanel_event_notify.h"
-  [ -f "${TP}" ] || fail "vendor/oplus link broken, touchpanel header not reachable"
-  pass "vendor link ok"
+  if [ -e "${SRC}/drivers/vendor" ] && [ ! -L "${SRC}/drivers/vendor" ]; then
+    fail "kernel repo has a real drivers/vendor directory, refusing to replace it"
+  fi
+  rm -f "${SRC}/drivers/vendor"
+  ln -s "${VND}/vendor" "${SRC}/drivers/vendor"
+  TP="${SRC}/drivers/vendor/oplus/kernel/touchpanel/oplus_touchscreen_v2/touchpanel_notify/touchpanel_event_notify.h"
+  if [ ! -f "${TP}" ]; then
+    echo "DIAG: searching for the touchpanel header in the modules clone:"
+    find "${VND}" -name touchpanel_event_notify.h 2>/dev/null | head -5 || true
+    fail "drivers/vendor link broken, touchpanel header not reachable"
+  fi
+  pass "drivers/vendor link ok"
 
   # oplus code includes ../../../../kernel-5.10/... so this must resolve to the kernel root
   rm -f "${SRC}/drivers/kernel-5.10"
