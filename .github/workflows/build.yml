@@ -39,10 +39,12 @@ jobs:
       - name: diagnose kernel failure
         if: failure()
         run: |
-          echo "--- error lines in kernel log:"
-          grep -nE "fatal error|error:|Error [0-9]|No such file|undefined reference|Killed" "$WORK/kernel-build.log" | head -40 || echo "  none"
-          echo "--- last 10 lines:"
-          tail -10 "$WORK/kernel-build.log" || true
+            kmake -j"$(nproc)" Image modules > "${WORK}/kernel-build.log" 2>&1 || {
+              echo "--- real errors:"
+              grep -nE "fatal error|error:|undefined reference|Killed|No space" "${WORK}/kernel-build.log" | head -40 || echo "  none matched"
+              tail -40 "${WORK}/kernel-build.log"
+              fail "kernel build"
+            }
 
       - name: driver
         run: ./build_nord3_8821au.sh driver
