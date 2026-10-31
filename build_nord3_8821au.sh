@@ -131,22 +131,18 @@ st_source() {
   [ -f "${TP}" ] || fail "drivers/vendor link broken, touchpanel header not reachable"
   pass "path links ok"
 
-  # Include dirs: ONLY the folder(s) whose header defines struct touchpanel_data,
-  # plus the folder of touchpanel_event_notify.h. Using every touchpanel*.h folder
-  # picked up an older copy of the struct and broke touch_pen_core.c.
-  DEF_DIRS="$(grep -rl --include=*.h -E 'struct[[:space:]]+touchpanel_data[[:space:]]*\{' "${VND}" 2>/dev/null \
-    | xargs -r -n1 dirname | sort -u || true)"
-  EVT_DIRS="$(find "${VND}" -name 'touchpanel_event_notify.h' -not -path '*/.git/*' 2>/dev/null \
-    | xargs -r -n1 dirname | sort -u || true)"
-  [ -n "${DEF_DIRS}" ] || fail "no header defines struct touchpanel_data in the modules clone"
-  echo "DIAG struct touchpanel_data defined in:"; echo "${DEF_DIRS}"
-  echo "DIAG touchpanel_event_notify.h in:"; echo "${EVT_DIRS:-  (none)}"
-
-  FLAGS=""
-  for d in $(printf '%s\n%s\n' "${DEF_DIRS}" "${EVT_DIRS}" | sort -u); do
-    [ -n "${d}" ] && FLAGS="${FLAGS} -I${d}"
-  done
-  echo "${FLAGS# }" > "${KCF_FILE}"
+  # Include path for touch_pen_core.c: ONLY the oplus_touchscreen_v2 folder (the one whose
+  # touchpanel_common.h has pen_msg_list), plus the touchpanel_notify folder.
+  # Do NOT add oplus_touchscreen/ (v1): its struct touchpanel_data has no pen_msg_list.
+  V2="${VND}/vendor/oplus/kernel/touchpanel/oplus_touchscreen_v2"
+  [ -f "${V2}/touchpanel_common.h" ] || fail "v2 touchpanel_common.h not found at ${V2}"
+  grep -q "pen_msg_list" "${V2}/touchpanel_common.h" || fail "v2 touchpanel_common.h has no pen_msg_list"
+  EVT="$(find "${V2}" -name touchpanel_event_notify.h | head -1 || true)"
+  [ -n "${EVT}" ] || fail "touchpanel_event_notify.h not found under v2"
+  EVT_DIR="$(dirname "${EVT}")"
+  echo "DIAG v2 folder : ${V2}"
+  echo "DIAG notify dir: ${EVT_DIR}"
+  echo "-I${V2} -I${EVT_DIR}" > "${KCF_FILE}"
   echo "KCFLAGS: $(cat "${KCF_FILE}")"
   pass "include flags written"
 
