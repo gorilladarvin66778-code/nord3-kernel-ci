@@ -131,17 +131,23 @@ st_source() {
   [ -f "${TP}" ] || fail "drivers/vendor link broken, touchpanel header not reachable"
   pass "path links ok"
 
-  # bare #include "touchpanel_event_notify.h" needs the header's folder on the -I path.
-  # Find every folder in the modules clone that holds touchpanel headers and pass them via KCFLAGS.
-  DIRS="$(find "${VND}" -name 'touchpanel*.h' -not -path '*/.git/*' -exec dirname {} \; | sort -u)"
-  [ -n "${DIRS}" ] || fail "no touchpanel headers found in modules clone"
+  # Include dirs: ONLY the folder(s) whose header defines struct touchpanel_data,
+  # plus the folder of touchpanel_event_notify.h. Using every touchpanel*.h folder
+  # picked up an older copy of the struct and broke touch_pen_core.c.
+  DEF_DIRS="$(grep -rl --include=*.h -E 'struct[[:space:]]+touchpanel_data[[:space:]]*\{' "${VND}" 2>/dev/null \
+    | xargs -r -n1 dirname | sort -u || true)"
+  EVT_DIRS="$(find "${VND}" -name 'touchpanel_event_notify.h' -not -path '*/.git/*' 2>/dev/null \
+    | xargs -r -n1 dirname | sort -u || true)"
+  [ -n "${DEF_DIRS}" ] || fail "no header defines struct touchpanel_data in the modules clone"
+  echo "DIAG struct touchpanel_data defined in:"; echo "${DEF_DIRS}"
+  echo "DIAG touchpanel_event_notify.h in:"; echo "${EVT_DIRS:-  (none)}"
+
   FLAGS=""
-  for d in ${DIRS}; do
-    FLAGS="${FLAGS} -I${d}"
+  for d in $(printf '%s\n%s\n' "${DEF_DIRS}" "${EVT_DIRS}" | sort -u); do
+    [ -n "${d}" ] && FLAGS="${FLAGS} -I${d}"
   done
   echo "${FLAGS# }" > "${KCF_FILE}"
-  echo "include dirs added:"
-  echo "${FLAGS}" | tr ' ' '\n' | sed '/^$/d' | head -20
+  echo "KCFLAGS: $(cat "${KCF_FILE}")"
   pass "include flags written"
 
   # link edits make the git tree dirty (adds -dirty). .scmversion gives a fixed -g<sha> instead.
