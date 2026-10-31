@@ -216,11 +216,18 @@ st_driver() {
   echo "--- driver Makefile lines that decide the module:"
   grep -nE 'CONFIG_RTL8821AU|MODULE_NAME' "${DRV}/Makefile" | head -10 || echo "  none"
 
-  # The driver Makefile only sets obj-m when CONFIG_RTL8821AU is defined. Our CI calls the
-  # kernel make directly (not the driver's own 'modules' target), so that export never runs.
-  # Pass the variable on the command line so the kernel-invoked pass sees it.
+  # Two fixes here:
+  #  1. CONFIG_RTL8821AU=m on the command line, so the driver's obj-$(CONFIG_RTL8821AU) is set.
+  #  2. Driver Makefile adds GCC-only -Wno-* flags. Clang 12 rejects unknown ones under -Werror.
+  #     -Wno-unknown-warning-option silences that, -Wno-error keeps other warnings from failing.
+  #  The touchpanel -I flags are NOT passed here; the driver does not need them.
   set +e
-  kmake -j"$(nproc)" M="${DRV}" CONFIG_RTL8821AU=m modules > "${WORK}/driver-build.log" 2>&1
+  make -C "${SRC}" O="${OUT}" ARCH=arm64 LLVM=1 LLVM_IAS=1 \
+    CROSS_COMPILE=aarch64-linux-gnu- CLANG_TRIPLE=aarch64-linux-gnu- \
+    HOSTCC=gcc HOSTCXX=g++ HOSTLD=ld LOCALVERSION="${LV}" \
+    M="${DRV}" CONFIG_RTL8821AU=m \
+    KCFLAGS="-Wno-unknown-warning-option -Wno-error" \
+    -j"$(nproc)" modules > "${WORK}/driver-build.log" 2>&1
   RC=$?
   set -e
   echo "--- make exit code: ${RC}"
