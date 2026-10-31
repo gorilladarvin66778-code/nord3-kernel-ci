@@ -213,28 +213,30 @@ st_driver() {
     git clone --depth 1 "${DRV_REPO}" "${DRV}"
   fi
 
-  echo "--- Makefile: module switch and targets"
-  grep -nE '^CONFIG_RTL8821AU|^CONFIG_RTL8821A|^CONFIG_PLATFORM_AUTODETECT|^modules:' "${DRV}/Makefile" || echo "  not found"
-  echo "--- Kbuild / source files present:"
-  ls "${DRV}" | head -40
+  echo "--- driver Makefile lines that decide the module:"
+  grep -nE 'CONFIG_RTL8821AU|MODULE_NAME' "${DRV}/Makefile" | head -10 || echo "  none"
 
+  # The driver Makefile only sets obj-m when CONFIG_RTL8821AU is defined. Our CI calls the
+  # kernel make directly (not the driver's own 'modules' target), so that export never runs.
+  # Pass the variable on the command line so the kernel-invoked pass sees it.
   set +e
-  kmake -j"$(nproc)" M="${DRV}" modules > "${WORK}/driver-build.log" 2>&1
+  kmake -j"$(nproc)" M="${DRV}" CONFIG_RTL8821AU=m modules > "${WORK}/driver-build.log" 2>&1
   RC=$?
   set -e
   echo "--- make exit code: ${RC}"
-  echo "--- driver build log (relevant lines):"
-  grep -nE "8821|\.ko|LD |Building|Error|error:|modpost|Skipping|warning: .*Kbuild" "${WORK}/driver-build.log" | tail -60 || echo "  none"
+  echo "--- driver build (CC/LD/MODPOST lines):"
+  grep -nE "8821|CC \[M\]|LD \[M\]|MODPOST|Error|error:" "${WORK}/driver-build.log" | tail -40 || echo "  none"
   echo "--- tail of driver build log:"
   tail -25 "${WORK}/driver-build.log" || true
 
-  echo "--- every .ko found under DRV, OUT, WORK (excluding kernel objs):"
-  find "${DRV}" "${OUT}" "${WORK}" -maxdepth 4 -name '*.ko' 2>/dev/null | grep -v '/drivers/\|/net/\|/fs/' | head -30 || echo "  none"
-
   [ "${RC}" = 0 ] || fail "driver make exited ${RC} (see log above)"
 
-  KO="$(find "${DRV}" "${OUT}" "${WORK}" -maxdepth 4 -name '8821au*.ko' -o -maxdepth 4 -name '*8821*.ko' 2>/dev/null | head -1 || true)"
-  [ -n "${KO}" ] || fail "make succeeded but no 8821 .ko found (see list above)"
+  KO="$(find "${DRV}" -maxdepth 2 -name '*8821*.ko' | head -1 || true)"
+  if [ -z "${KO}" ]; then
+    echo "--- .ko files in driver dir:"
+    find "${DRV}" -maxdepth 2 -name '*.ko' || echo "  none"
+    fail "make succeeded but no 8821 .ko in ${DRV} (see list above)"
+  fi
   cp "${KO}" "${DIST}/8821au.ko"
   sha256sum "${DIST}/8821au.ko"
   pass "built ${DIST}/8821au.ko from ${KO}"
