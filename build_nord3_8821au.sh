@@ -213,27 +213,29 @@ st_driver() {
     git clone --depth 1 "${DRV_REPO}" "${DRV}"
   fi
 
-  echo "--- adapter IDs listed in driver (2357:0120 / 0x2357 expected):"
+  echo "--- adapter IDs listed in driver (2357:0120 expected):"
   grep -ri -e "2357" -e "0x2357" "${DRV}/supported-device-IDs" 2>/dev/null | head -5 || echo "  2357 not found"
   echo "--- driver switches in Makefile:"
   grep -nE '^CONFIG_RTL8821A |^CONFIG_RTL8821AU|^CONFIG_USB_HCI|^CONFIG_RTW_ANDROID' "${DRV}/Makefile" || echo "  none found"
 
-  # CONFIG_RTL8821AU=m: the module switch (obj-$(CONFIG_RTL8821AU)); also set by the openSUSE package.
-  # CONFIG_RTL8821A=y: chipset select (already default y, passed explicitly for clarity).
-  # USER_EXTRA_CFLAGS: the driver Makefile appends this to its own flags. Clang 12 rejects the
-  # GCC-only -Wno-* options it adds, so silence unknown warning options only (not all errors).
+  # CONFIG_RTL8821AU=m: module switch (obj-$(CONFIG_RTL8821AU)); the openSUSE package sets it too.
+  # CONFIG_RTL8821A=y: chipset select (already default y).
+  # USER_EXTRA_CFLAGS is appended to the driver's flags. -Wno-error stops the kernel's -Werror from
+  # failing on driver warnings (clang 12 finds uninitialized vars and header-guard typos in this
+  # upstream code). Warnings are counted below so they can be reviewed. Real compile errors still fail.
   set +e
   make -C "${SRC}" O="${OUT}" ARCH=arm64 LLVM=1 LLVM_IAS=1 \
     CROSS_COMPILE=aarch64-linux-gnu- CLANG_TRIPLE=aarch64-linux-gnu- \
     HOSTCC=gcc HOSTCXX=g++ HOSTLD=ld LOCALVERSION="${LV}" \
     M="${DRV}" CONFIG_RTL8821AU=m CONFIG_RTL8821A=y CONFIG_USB_HCI=y \
-    USER_EXTRA_CFLAGS="-Wno-unknown-warning-option" \
+    USER_EXTRA_CFLAGS="-Wno-unknown-warning-option -Wno-error" \
     -j"$(nproc)" modules > "${WORK}/driver-build.log" 2>&1
   RC=$?
   set -e
 
   echo "--- make exit code: ${RC}"
-  echo "--- chip-specific objects (hal/ = proves the 8821 HAL was selected):"
+  echo "--- warnings in driver build: $(grep -c 'warning:' "${WORK}/driver-build.log" || true)"
+  echo "--- chip-specific objects (hal/ = 8821 HAL selected):"
   grep -nE "hal/.*8821|hal/rtl8821|8821" "${WORK}/driver-build.log" | head -20 || echo "  none"
   echo "--- errors (if any):"
   grep -nE "error:|Error [0-9]" "${WORK}/driver-build.log" | head -40 || echo "  none"
