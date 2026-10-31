@@ -29,6 +29,7 @@ OUT="${WORK}/out"
 DRV="${WORK}/8821au"
 DIST="${WORK}/dist"
 CLANG="${WORK}/clang-repo/${CLANG_NAME}"
+KCF_FILE="${WORK}/kcflags.txt"
 mkdir -p "${WORK}" "${DIST}"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -40,9 +41,12 @@ need_clang() {
 }
 
 kmake() {
+  KCF=""
+  if [ -f "${KCF_FILE}" ]; then KCF="$(cat "${KCF_FILE}")"; fi
   make -C "${SRC}" O="${OUT}" ARCH=arm64 LLVM=1 LLVM_IAS=1 \
     CROSS_COMPILE=aarch64-linux-gnu- CLANG_TRIPLE=aarch64-linux-gnu- \
-    HOSTCC=gcc HOSTCXX=g++ HOSTLD=ld LOCALVERSION="${LV}" "$@"
+    HOSTCC=gcc HOSTCXX=g++ HOSTLD=ld LOCALVERSION="${LV}" \
+    KCFLAGS="${KCF}" "$@"
 }
 
 st_deps() {
@@ -110,32 +114,40 @@ st_source() {
   done < <(git -C "${SRC}" ls-files -s)
   [ "${BAD}" = 0 ] || fail "some oplus links have no target in the modules clone (see MISSING)"
 
-  # oplus code includes ../../../../vendor/oplus/... from drivers/gpu/drm/mediatek/oplus/,
-  # which resolves to drivers/vendor/oplus/... so drivers/vendor must point at the
-  # modules clone's vendor/ directory. Remove the wrong link from the previous attempt.
-  rm -f "${SRC}/vendor"
+  # oplus code includes ../../../../vendor/oplus/... from drivers/gpu/drm/mediatek/mediatek_v2/,
+  # which resolves to drivers/vendor/oplus/...
   if [ -e "${SRC}/drivers/vendor" ] && [ ! -L "${SRC}/drivers/vendor" ]; then
     fail "kernel repo has a real drivers/vendor directory, refusing to replace it"
   fi
   rm -f "${SRC}/drivers/vendor"
   ln -s "${VND}/vendor" "${SRC}/drivers/vendor"
-  TP="${SRC}/drivers/vendor/oplus/kernel/touchpanel/oplus_touchscreen_v2/touchpanel_notify/touchpanel_event_notify.h"
-  if [ ! -f "${TP}" ]; then
-    echo "DIAG: searching for the touchpanel header in the modules clone:"
-    find "${VND}" -name touchpanel_event_notify.h 2>/dev/null | head -5 || true
-    fail "drivers/vendor link broken, touchpanel header not reachable"
-  fi
-  pass "drivers/vendor link ok"
 
   # oplus code includes ../../../../kernel-5.10/... so this must resolve to the kernel root
   rm -f "${SRC}/drivers/kernel-5.10"
   ln -s ../ "${SRC}/drivers/kernel-5.10"
   [ -f "${SRC}/drivers/kernel-5.10/drivers/power/supply/charger_class.h" ] || fail "kernel-5.10 link broken"
 
+  TP="${SRC}/drivers/vendor/oplus/kernel/touchpanel/oplus_touchscreen_v2/touchpanel_notify/touchpanel_event_notify.h"
+  [ -f "${TP}" ] || fail "drivers/vendor link broken, touchpanel header not reachable"
+  pass "path links ok"
+
+  # bare #include "touchpanel_event_notify.h" needs the header's folder on the -I path.
+  # Find every folder in the modules clone that holds touchpanel headers and pass them via KCFLAGS.
+  DIRS="$(find "${VND}" -name 'touchpanel*.h' -not -path '*/.git/*' -exec dirname {} \; | sort -u)"
+  [ -n "${DIRS}" ] || fail "no touchpanel headers found in modules clone"
+  FLAGS=""
+  for d in ${DIRS}; do
+    FLAGS="${FLAGS} -I${d}"
+  done
+  echo "${FLAGS# }" > "${KCF_FILE}"
+  echo "include dirs added:"
+  echo "${FLAGS}" | tr ' ' '\n' | sed '/^$/d' | head -20
+  pass "include flags written"
+
   # link edits make the git tree dirty (adds -dirty). .scmversion gives a fixed -g<sha> instead.
   echo "-g${H}" > "${SRC}/.scmversion"
   SV="$(cat "${SRC}/.scmversion")"
-  pass "path links ok, scmversion=${SV}"
+  pass "scmversion=${SV}"
 }
 
 st_config() {
@@ -172,7 +184,13 @@ st_kernel() {
   need_clang
   [ -f "${OUT}/.config" ] || fail "run config first"
   echo "Heavy step. Progress: tail -f ${WORK}/kernel-build.log"
-  kmake -j"$(nproc)" Image modules > "${WORK}/kernel-build.log" 2>&1 || { tail -40 "${WORK}/kernel-build.log"; fail "kernel build"; }
+  if ! kmake -j"$(nproc)" Image modules > "${WORK}/kernel-build.log" 2>&1; then
+    echo "--- real errors:"
+    grep -nE "fatal error|error:|undefined reference|Killed|No space" "${WORK}/kernel-build.log" | head -40 || echo "  none matched"
+    echo "--- last 40 lines:"
+    tail -40 "${WORK}/kernel-build.log"
+    fail "kernel build"
+  fi
   [ -f "${OUT}/Module.symvers" ] || fail "Module.symvers not produced"
   REL="$(cat "${OUT}/include/config/kernel.release")"
   [ "${REL}" = "${EXPECT_REL}" ] || fail "release ${REL}"
