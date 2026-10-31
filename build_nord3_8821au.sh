@@ -212,14 +212,32 @@ st_driver() {
   if [ ! -d "${DRV}/.git" ]; then
     git clone --depth 1 "${DRV_REPO}" "${DRV}"
   fi
-  echo "--- platform options in driver Makefile (not changed by this script):"
-  grep -nE '^CONFIG_PLATFORM_' "${DRV}/Makefile" || echo "  none found"
-  kmake -j"$(nproc)" M="${DRV}" modules > "${WORK}/driver-build.log" 2>&1 || { tail -40 "${WORK}/driver-build.log"; fail "driver build"; }
-  KO="$(find "${DRV}" -name '8821au.ko' | head -1)"
-  [ -n "${KO}" ] || fail "8821au.ko not produced"
+
+  echo "--- Makefile: module switch and targets"
+  grep -nE '^CONFIG_RTL8821AU|^CONFIG_RTL8821A|^CONFIG_PLATFORM_AUTODETECT|^modules:' "${DRV}/Makefile" || echo "  not found"
+  echo "--- Kbuild / source files present:"
+  ls "${DRV}" | head -40
+
+  set +e
+  kmake -j"$(nproc)" M="${DRV}" modules > "${WORK}/driver-build.log" 2>&1
+  RC=$?
+  set -e
+  echo "--- make exit code: ${RC}"
+  echo "--- driver build log (relevant lines):"
+  grep -nE "8821|\.ko|LD |Building|Error|error:|modpost|Skipping|warning: .*Kbuild" "${WORK}/driver-build.log" | tail -60 || echo "  none"
+  echo "--- tail of driver build log:"
+  tail -25 "${WORK}/driver-build.log" || true
+
+  echo "--- every .ko found under DRV, OUT, WORK (excluding kernel objs):"
+  find "${DRV}" "${OUT}" "${WORK}" -maxdepth 4 -name '*.ko' 2>/dev/null | grep -v '/drivers/\|/net/\|/fs/' | head -30 || echo "  none"
+
+  [ "${RC}" = 0 ] || fail "driver make exited ${RC} (see log above)"
+
+  KO="$(find "${DRV}" "${OUT}" "${WORK}" -maxdepth 4 -name '8821au*.ko' -o -maxdepth 4 -name '*8821*.ko' 2>/dev/null | head -1 || true)"
+  [ -n "${KO}" ] || fail "make succeeded but no 8821 .ko found (see list above)"
   cp "${KO}" "${DIST}/8821au.ko"
   sha256sum "${DIST}/8821au.ko"
-  pass "built ${DIST}/8821au.ko"
+  pass "built ${DIST}/8821au.ko from ${KO}"
 }
 
 st_check() {
