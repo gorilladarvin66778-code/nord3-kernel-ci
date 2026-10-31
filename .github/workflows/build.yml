@@ -36,16 +36,6 @@ jobs:
       - name: kernel
         run: ./build_nord3_8821au.sh kernel
 
-      - name: diagnose kernel failure
-        if: failure()
-        run: |
-            kmake -j"$(nproc)" Image modules > "${WORK}/kernel-build.log" 2>&1 || {
-              echo "--- real errors:"
-              grep -nE "fatal error|error:|undefined reference|Killed|No space" "${WORK}/kernel-build.log" | head -40 || echo "  none matched"
-              tail -40 "${WORK}/kernel-build.log"
-              fail "kernel build"
-            }
-
       - name: driver
         run: ./build_nord3_8821au.sh driver
 
