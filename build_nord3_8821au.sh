@@ -122,10 +122,16 @@ st_source() {
   rm -f "${SRC}/drivers/vendor"
   ln -s "${VND}/vendor" "${SRC}/drivers/vendor"
 
-  # oplus code includes ../../../../kernel-5.10/... so this must resolve to the kernel root
+  # oplus code includes ../../../../kernel-5.10/... from two depths, so both links are needed:
+  #  - from drivers/power/oplus/v1/charger_ic/ the target is drivers/kernel-5.10
+  #  - from drivers/power/oplus/test-kit/../charger_ic/ the target is <root>/kernel-5.10
   rm -f "${SRC}/drivers/kernel-5.10"
   ln -s ../ "${SRC}/drivers/kernel-5.10"
-  [ -f "${SRC}/drivers/kernel-5.10/drivers/power/supply/charger_class.h" ] || fail "kernel-5.10 link broken"
+  rm -f "${SRC}/kernel-5.10"
+  ln -s . "${SRC}/kernel-5.10"
+  [ -f "${SRC}/drivers/kernel-5.10/drivers/power/supply/charger_class.h" ] || fail "drivers/kernel-5.10 link broken"
+  [ -f "${SRC}/kernel-5.10/drivers/power/supply/charger_class.h" ] || fail "root kernel-5.10 link broken"
+  pass "kernel-5.10 links ok (drivers/ and root)"
 
   TP="${SRC}/drivers/vendor/oplus/kernel/touchpanel/oplus_touchscreen_v2/touchpanel_notify/touchpanel_event_notify.h"
   [ -f "${TP}" ] || fail "drivers/vendor link broken, touchpanel header not reachable"
