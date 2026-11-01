@@ -206,89 +206,48 @@ st_kernel() {
   pass "built ${REL}, Module.symvers has ${N} lines"
 }
 
-st_driver() {
-  need_clang
-  [ -f "${OUT}/Module.symvers" ] || fail "run kernel first"
-  if [ ! -d "${DRV}/.git" ]; then
-    git clone --depth 1 "${DRV_REPO}" "${DRV}"
+patch_tasklets() {
+  # Kernel 5.10 tasklet_init() calls the callback as void(unsigned long). The driver declares its
+  # callbacks as void(void *) and casts them, which does not change the target's type. CFI checks
+  # the target's type at the call, so it traps. Fix: make the callbacks take unsigned long and
+  # cast back to void * inside. Also remove the function-pointer casts at tasklet_init call sites.
+  python3 - "$1" <<'PY'
+import re, sys, pathlib
+root = pathlib.Path(sys.argv[1])
+names = ["usb_recv_tasklet", "rtl8812au_xmit_tasklet", "mpath_tx_tasklet_hdl"]
+defs_found = {n: 0 for n in names}
+files_changed = 0
+for p in root.rglob("*"):
+    if not p.is_file() or p.suffix not in (".c", ".h"):
+        continue
+    s = p.read_text(errors="ignore")
+    o = s
+    for n in names:
+        def_pat = r"void\s+%s\s*\(\s*void\s*\*\s*priv\s*\)\s*\n(\s*)\{" % n
+        def_count = len(re.findall(def_pat, s))
+        defs_found[n] += def_count
+        s = re.sub(def_pat,
+                   lambda m, n=n: "void %s(unsigned long _priv)\n%s{\n%s\tvoid *priv = (void *)_priv;"
+                                  % (n, m.group(1), m.group(1)), s)
+        s = re.sub(r"void\s+%s\s*\(\s*void\s*\*\s*priv\s*\)\s*;" % n,
+                   "void %s(unsigned long _priv);" % n, s)
+        s = re.sub(r"\(\s*void\s*\(\s*\*\s*\)\s*(\(\s*unsigned long\s*\)\s*)?\)\s*%s\b" % n, n, s)
+        s = re.sub(r"\(\s*void\s*\*\s*\)\s*%s\b" % n, n, s)
+    if s != o:
+        p.write_text(s)
+        files_changed += 1
+        print("patched", p)
+print("files changed:", files_changed)
+missing = [n for n, c in defs_found.items() if c == 0]
+for n, c in defs_found.items():
+    print("definitions patched for %s: %d" % (n, c))
+if missing:
+    print("ERROR: no definition found for:", missing)
+    sys.exit(1)
+PY
+  [ $? -eq 0 ] || fail "tasklet patch failed"
+  # verify no old-style definitions remain for these names
+  if grep -rnE "void +(usb_recv_tasklet|rtl8812au_xmit_tasklet|mpath_tx_tasklet_hdl) *\(void *\* *priv\)" "$1" --include=*.c --include=*.h 2>/dev/null | head -5 | grep -q .; then
+    fail "old void*-style tasklet callbacks still present"
   fi
-
-  echo "--- adapter IDs listed in driver (2357:0120 expected):"
-  grep -ri -e "2357" -e "0x2357" "${DRV}/supported-device-IDs" 2>/dev/null | head -5 || echo "  2357 not found"
-  echo "--- driver switches in Makefile:"
-  grep -nE '^CONFIG_RTL8821A |^CONFIG_RTL8821AU|^CONFIG_USB_HCI|^CONFIG_RTW_ANDROID' "${DRV}/Makefile" || echo "  none found"
-
-  # CONFIG_RTL8821AU=m: module switch (obj-$(CONFIG_RTL8821AU)); the openSUSE package sets it too.
-  # CONFIG_RTL8821A=y: chipset select (already default y).
-  # USER_EXTRA_CFLAGS is appended to the driver's flags. -Wno-error stops the kernel's -Werror from
-  # failing on driver warnings (clang 12 finds uninitialized vars and header-guard typos in this
-  # upstream code). Warnings are counted below so they can be reviewed. Real compile errors still fail.
-  set +e
-  make -C "${SRC}" O="${OUT}" ARCH=arm64 LLVM=1 LLVM_IAS=1 \
-    CROSS_COMPILE=aarch64-linux-gnu- CLANG_TRIPLE=aarch64-linux-gnu- \
-    HOSTCC=gcc HOSTCXX=g++ HOSTLD=ld LOCALVERSION="${LV}" \
-    M="${DRV}" CONFIG_RTL8821AU=m CONFIG_RTL8821A=y CONFIG_USB_HCI=y \
-    USER_EXTRA_CFLAGS="-Wno-unknown-warning-option -Wno-error" \
-    -j"$(nproc)" modules > "${WORK}/driver-build.log" 2>&1
-  RC=$?
-  set -e
-
-  echo "--- make exit code: ${RC}"
-  echo "--- warnings in driver build: $(grep -c 'warning:' "${WORK}/driver-build.log" || true)"
-  echo "--- chip-specific objects (hal/ = 8821 HAL selected):"
-  grep -nE "hal/.*8821|hal/rtl8821|8821" "${WORK}/driver-build.log" | head -20 || echo "  none"
-  echo "--- errors (if any):"
-  grep -nE "error:|Error [0-9]" "${WORK}/driver-build.log" | head -40 || echo "  none"
-  echo "--- tail of driver build log:"
-  tail -25 "${WORK}/driver-build.log" || true
-
-  [ "${RC}" = 0 ] || fail "driver make exited ${RC} (see log above)"
-
-  KO="$(find "${DRV}" -maxdepth 2 -name '*8821*.ko' | head -1 || true)"
-  if [ -z "${KO}" ]; then
-    echo "--- .ko files in driver dir:"
-    find "${DRV}" -maxdepth 2 -name '*.ko' || echo "  none"
-    fail "make succeeded but no 8821 .ko in ${DRV} (see list above)"
-  fi
-  cp "${KO}" "${DIST}/8821au.ko"
-  sha256sum "${DIST}/8821au.ko"
-  pass "built ${DIST}/8821au.ko from ${KO}"
-}
-
-st_check() {
-  KO="${DIST}/8821au.ko"
-  [ -f "${KO}" ] || fail "run driver first"
-
-  VM="$(strings "${KO}" | grep -m1 '^vermagic=' | sed 's/^vermagic=//' || true)"
-  echo "module : ${VM}"
-  echo "running: ${EXPECT_VERMAGIC}"
-  if [ "${VM}" = "${EXPECT_VERMAGIC}" ]; then
-    pass "vermagic matches"
-  else
-    fail "vermagic differs - do NOT load"
-  fi
-
-  rm -f "${WORK}/missing-syms.txt"
-  MISS=0
-  for s in $(aarch64-linux-gnu-nm -u "${KO}" | awk '{print $2}' | sort -u); do
-    if ! awk -v s="${s}" '$2==s{f=1} END{exit !f}' "${OUT}/Module.symvers"; then
-      MISS=$((MISS+1))
-      echo "${s}" >> "${WORK}/missing-syms.txt"
-    fi
-  done
-  echo "undefined symbols not in Module.symvers: ${MISS} (list: ${WORK}/missing-syms.txt)"
-  echo "NOTE: some symbols come from vmlinux, not Module.symvers. Review this list before any insmod."
-  sha256sum "${KO}"
-  pass "check finished - no phone load done"
-}
-
-case "${1:-}" in
-  deps) st_deps ;;
-  toolchain) st_toolchain ;;
-  source) st_source ;;
-  config) st_config ;;
-  kernel) st_kernel ;;
-  driver) st_driver ;;
-  check) st_check ;;
-  *) echo "usage: $0 deps|toolchain|source|config|kernel|driver|check"; exit 1 ;;
-esac
+  pass "tasklet callbacks patched to
